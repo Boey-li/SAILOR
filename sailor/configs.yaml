@@ -13,8 +13,8 @@ defaults:
 
   # Wandb configs
   use_wandb: True
-  wandb_entity: 'scaling-rl' # Top level name
-  wandb_project: null
+  wandb_entity: 'rl2-group' # Top level name
+  wandb_project: 'egowm'
   wandb_exp_name: null
 
   # Run Params

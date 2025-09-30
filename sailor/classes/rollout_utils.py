@@ -194,6 +194,7 @@ def collect_onpolicy_trajs(
             for _ in range(num_envs)
         ]  # List of independent dictionaries of data for each environment
 
+        # Reset the environment and the policy
         obs = train_env.reset()
         base_policy.reset()
 

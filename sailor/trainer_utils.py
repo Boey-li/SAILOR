@@ -57,6 +57,9 @@ def make_retrain_dp_dataset(replay_buffer, expert_eps, config):
 
 
 def count_n_transitions(eps):
+    """
+    Count the number of transitions in the episodes dictionary.
+    """
     n_transitions = 0
     for key in eps.keys():
         n_transitions += len(eps[key]["action"])
@@ -75,15 +78,17 @@ def label_expert_eps(expert_eps, dreamer_class):
         "yellow",
     )
     for key in expert_eps.keys():
-        data_traj_i = expert_eps[key].copy()
+        data_traj_i = expert_eps[key].copy() # copy trajectory data
 
         # Stack across the length of the trajectory, add dummy BL dimension
+        # Transform from list format to batched tensor format
         for k, v in data_traj_i.items():
             data_traj_i[k] = np.stack(v)
             data_traj_i[k] = np.expand_dims(
                 data_traj_i[k], axis=1
-            )  # Add dummy BL dimension
+            )  # Add dummy BL dimension to match expected input shape
 
+        # Chunked Processing
         # Process in chunks of 64
         base_action_raw = []
         for i in range(
@@ -95,6 +100,7 @@ def label_expert_eps(expert_eps, dreamer_class):
                 for k, v in data_traj_i.items()
             }
             # Pass the slice through the base policy to get the base action
+            # get_action_direct() calls the diffusion model's DDIM sampler
             base_action_raw_chunk = (
                 dreamer_class._task_behavior.base_policy.get_action_direct(
                     data_traj_i_slice

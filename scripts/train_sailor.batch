@@ -1,0 +1,26 @@
+#!/bin/bash
+#SBATCH --job-name=sailor_test
+#SBATCH --output=sbatch_logs/sailor_test.out
+#SBATCH --error=sbatch_logs/sailor_test.err
+#SBATCH --partition="rl2-lab"
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=7
+#SBATCH --gpus-per-node="a40:1"
+#SBATCH --qos="short"
+#SBATCH --exclude="clippy"
+
+source /coc/flash7/bli678/miniconda3/etc/profile.d/conda.sh
+conda activate robomimic
+
+SUITE="robomimic" # [robomimic | maniskill | robocasa]
+TASK="square" # Any task of the respective suite
+NUM_EXP_TRAJS=50
+SEED=0
+python3 train_sailor.py \
+    --configs cfg_dp_mppi ${SUITE}\
+    --wandb_project SAILOR_${SUITE} \
+    --wandb_exp_name "seed${SEED}" \
+    --task "${SUITE}__${TASK}" \
+    --num_exp_trajs ${NUM_EXP_TRAJS} \
+    --seed ${SEED}

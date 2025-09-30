@@ -11,3 +11,5 @@ datasets/robomimic_datasets**
 datasets/robocasa_datasets**
 
 demos/**
+sbatch_logs/** 
+wandb/**

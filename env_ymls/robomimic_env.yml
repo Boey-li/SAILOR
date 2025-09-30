@@ -1,4 +1,4 @@
-name: robomimic_env
+name: robomimic
 channels:
   - defaults
   - conda-forge
