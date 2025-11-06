@@ -87,11 +87,21 @@ class Dreamer(nn.Module):
     def _train(self, data, training_step):
         # Obs shape BS x BL x ... x stack_dim
         metrics = {}
+        
+        # data image: [BS, BL, H, W, C, obs_horizon]
+        # data_wm image: [BS, BL, H, W, C]
         data_wm = select_latest_obs(data)  # Select only last obs and remove stacking
+        
+        # post: dict_keys(['stoch', 'deter', 'logit'])
+        # context: dict_keys(['embed', 'feat', 'kl', 'postent'])
+        # mets: dict_keys(['model_loss', 'model_grad_norm', 'agentview_image_loss', 'robot0_eye_in_hand_image_loss', 
+        #                  'state_loss', 'cont_loss', 'kl_free', 'dyn_scale', 'rep_scale', 
+        #                  'dyn_loss', 'rep_loss', 'kl', 'prior_ent', 'post_ent'])
         post, context, mets = self._wm._train(data_wm)
         metrics.update(mets)
         start = {"obs_orig": data, "post": post}
 
+        # Discriminator for Reward Model Training
         if self._config.train_dp_mppi_params["use_discrim"]:
             if self._config.train_dp_mppi_params["discrim_state_only"]:
                 reward = lambda f, s, a: self._wm.get_reward(

@@ -3,6 +3,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime
+import pathlib
 
 import cv2
 import einops
@@ -195,6 +196,9 @@ def collect_onpolicy_trajs(
         ]  # List of independent dictionaries of data for each environment
 
         # Reset the environment and the policy
+        # obs: dict_keys(['agentview_image', 'robot0_eye_in_hand_image', 
+        #                 'state', 'is_first', 'is_last', 'is_terminal'])
+        # each with shape (num_envs, ...)
         obs = train_env.reset()
         base_policy.reset()
 
@@ -205,11 +209,15 @@ def collect_onpolicy_trajs(
         for step_idx in range(max_traj_len):
             if np.all(dones):
                 break
-
+            
+            # generate actions with noises
+            # action_dict: dict_keys(['base_action', 'residual_action'])
             action_dict = base_policy.get_action(obs)
             action = np.clip(
                 action_dict["base_action"] + action_dict["residual_action"], -1, 1
             )
+            
+            # generate obs with obatined action
             obs_next, rewards, dones, infos = train_env.step(action)
 
             # Add obs and action to obs_list
@@ -235,7 +243,7 @@ def collect_onpolicy_trajs(
             obs = obs_next
 
         # Uncomment to visualize the collected trajectory
-        # save_collected_traj_video(obs_traj, rollout_idx=n_trajs_collected, logdir=pathlib.Path("."))
+        # save_collected_traj_video(obs_traj, rollout_idx=n_step_collected, logdir=pathlib.Path("."))
         # breakpoint()
 
         for env_idx in range(num_envs):
@@ -289,11 +297,14 @@ def add_traj_to_cache(
 
     # Stack Observations for State and Pixel Keys
     stacked_obs = {}
+    # state: [state_dim, obs_horizon] [9, 2]
     stacked_obs["state"] = get_obs_stacked(obs_traj["state"], obs_horizon)
+    # image: [H, W, C, obs_horizon] [64, 64, 3, 2]
     for key in pixel_keys:
         stacked_obs[key] = get_obs_stacked(obs_traj[key], obs_horizon)
 
     # Stack base and residual actions
+    # [action_dim, pred_horizon] [7, 8]
     stacked_base_acts = get_act_stacked(obs_traj["base_action"], pred_horizon)
     stacked_residual_acts = get_act_stacked(obs_traj["residual_action"], pred_horizon)
 

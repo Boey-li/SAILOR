@@ -13,3 +13,4 @@ datasets/robocasa_datasets**
 demos/**
 sbatch_logs/** 
 wandb/**
+collected_traj_videos/**

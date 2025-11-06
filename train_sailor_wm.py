@@ -206,7 +206,8 @@ def train_eval(config):
         )
 
         # Run train loop
-        trainer.train_dp_with_mppi()
+        # trainer.train_dp_with_mppi()
+        trainer.train_test_wm()
 
     envs.close()
     cprint("--------Finished Everything--------", "yellow", attrs=["bold"])

@@ -10,7 +10,7 @@ from termcolor import cprint
 
 from sailor.classes.preprocess import Preprocessor
 from sailor.classes.resnet_encoder import ResNetEncoder
-from sailor.classes.rollout_utils import collect_onpolicy_trajs, mixed_sample
+from sailor.classes.rollout_utils import collect_onpolicy_trajs, mixed_sample, select_latest_obs
 from sailor.dreamer import tools
 from sailor.dreamer.dreamer_class import Dreamer
 from sailor.policies.diffusion_base_policy import (DiffusionBasePolicy,
@@ -115,27 +115,39 @@ class SAILORTrainer:
         num_buffer_transitions = count_n_transitions(self.replay_buffer)
         print("Number of expert transitions: ", self.num_expert_transitions)
         print("Number of buffer transitions: ", num_buffer_transitions)
-        print(f"Mixed training with 50% expert data for {itrs} iterations")
 
-        expert_dataset = tools.make_dataset(
+        expert_dataset_1 = tools.make_dataset(
             self.expert_eps,
             batch_length=self.config.batch_length,
             batch_size=self.config.batch_size // 2,
-        ) # sample 50% episodes
-        train_dataset = tools.make_dataset(
-            self.replay_buffer,
+        )
+        
+        expert_dataset_2 = tools.make_dataset(
+            self.expert_eps,
             batch_length=self.config.batch_length,
             batch_size=self.config.batch_size // 2,
-        ) # sample 50% episodes
+        )
+        
+        # train_dataset = tools.make_dataset(
+        #     self.replay_buffer,
+        #     batch_length=self.config.batch_length,
+        #     batch_size=self.config.batch_size // 2,
+        # )
+        
         for n_wm_itr in range(itrs):
             batch = mixed_sample(
                 batch_size=self.config.batch_size,
-                expert_dataset=expert_dataset,
-                train_dataset=train_dataset,
+                expert_dataset=expert_dataset_1,
+                train_dataset=expert_dataset_2,
                 device=self.config.device,
                 remove_obs_stack=False,
                 sqil_discriminator=self.config.train_dp_mppi_params["use_discrim"],
             ) # merge episodes
+            
+            # expert_batch = next(expert_dataset)
+            # batch = {}
+            # for key in expert_batch.keys():
+            #     batch[key] = torch.tensor(expert_batch[key], device=self.config.device)
 
             metrics = self.dreamer_class._train(
                 data=batch,
@@ -158,6 +170,23 @@ class SAILORTrainer:
                     self.logger.scalar(f"wm_critic_train/step", self._step)
                     self.logger.scalar(f"wm_critic_train/itr", n_wm_itr)
                     self.logger.write(step=self._step, fps=True)
+        
+        
+        data_wm = select_latest_obs(batch)
+        obs_dreamer = self.dreamer_class._wm.preprocess(data_wm)
+        embed = self.dreamer_class._wm.encoder(obs_dreamer) # [BS, BL, 1024 + encoding_dim]
+        action = None
+        
+        
+        
+        obs_decode = self.dreamer_class._wm.heads["decoder"](embed)
+        import pdb; pdb.set_trace()
+        
+        
+        
+        
+        
+
 
     def relabel_with_mppi_post(
         self, num_trajs_to_relabel, batch_size=32, select_from_end=True
@@ -592,3 +621,49 @@ class SAILORTrainer:
             print(f"Round {round_id} took {time.time() - start_time} seconds")
             if self.logger is not None:
                 self.logger.scalar(f"round_time", time.time() - start_time)
+    
+    
+    def train_test_wm(self):
+        # num_steps_to_collect = int(
+        #     self.config.train_dp_mppi_params["warmstart_percentage_env_steps"]
+        #     * self.config.train_dp_mppi_params["n_env_steps"]
+        # )
+        # num_warmstart_itrs = int(
+        #     num_steps_to_collect
+        #     * self.config.train_dp_mppi_params["warmstart_train_ratio"]
+        # )
+        num_steps_to_collect = 1000
+        
+        # Collect rollout data with base policy
+        # Save the rollout data into self.replay_buffer
+        collect_onpolicy_trajs(
+            num_steps=num_steps_to_collect,
+            max_traj_len=self.config.time_limit if not self.config.debug else 10,
+            base_policy=DiffusionPolicyAgent(
+                config=self.config,
+                diffusion_policy=self.base_policy,
+                noise_std=self.config.train_dp_mppi_params["data_collect_noise_std"],
+            ),
+            train_env=self.train_env,
+            pred_horizon=self.config.pred_horizon,
+            obs_horizon=self.config.obs_horizon,
+            train_eps=self.replay_buffer,
+            save_dir=None,
+            state_only=self.config.state_only,
+        )
+        import pdb; pdb.set_trace()
+        
+        # Relabel the GT action to base_action and residual_action
+        # Base action is obtained from base policy
+        # Residual action = (action - base_action)
+        # action, base_action, residual_action: (action_dim x pred_horizon)
+        label_expert_eps(
+            expert_eps=self.expert_eps,
+            dreamer_class=self.dreamer_class,
+        )
+        
+        # # Train WM and Critic
+        # num_warmstart_itrs = 1
+        # self.train_wm_critic(itrs=num_warmstart_itrs)
+        
+        import pdb; pdb.set_trace()
