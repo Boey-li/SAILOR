@@ -2,7 +2,7 @@ SUITE="robomimic" # [robomimic | maniskill | robocasa]
 TASK="square" # Any task of the respective suite
 NUM_EXP_TRAJS=1 #50
 SEED=0
-BASE_POLICY_PRETRAINED_CKPT="/coc/flash7/bli678/projects/egowm/external/SAILOR/scratch_dir/logs/robomimic__square/seed0_demos50/seed0/DP_Pretrain_base_policy_latest.pt"
+BASE_POLICY_PRETRAINED_CKPT="/home/bli678/projects/egowm/ckpts/sailor/DP_Pretrain_base_policy_latest.pt"
 
 python3 train_sailor_wm.py \
     --configs cfg_dp_mppi ${SUITE}\
@@ -16,3 +16,4 @@ python3 train_sailor_wm.py \
     --batch_size 2 \
     --batch_length 1 \
     --set train_dp_mppi_params.use_discrim True \
+    --datadir /home/bli678/projects/egowm/data/robomimic_datasets

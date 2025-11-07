@@ -1,23 +1,28 @@
 import collections
 import copy
 import os
-import pickle as pkl
 import time
 
 import numpy as np
 import torch
 from termcolor import cprint
 
+from sailor.dreamer import tools
 from sailor.classes.preprocess import Preprocessor
 from sailor.classes.resnet_encoder import ResNetEncoder
-from sailor.classes.rollout_utils import collect_onpolicy_trajs, mixed_sample, select_latest_obs
-from sailor.dreamer import tools
 from sailor.dreamer.dreamer_class import Dreamer
-from sailor.policies.diffusion_base_policy import (DiffusionBasePolicy,
-                                                   DiffusionPolicyAgent)
+from sailor.policies.diffusion_base_policy import DiffusionBasePolicy, DiffusionPolicyAgent
 from sailor.policies.residual_policy import ResidualPolicy
-from sailor.trainer_utils import (count_n_transitions, label_expert_eps,
-                                  make_retrain_dp_dataset)
+from sailor.trainer_utils import (
+    count_n_transitions, 
+    label_expert_eps,
+    make_retrain_dp_dataset)
+from sailor.classes.rollout_utils import (
+    collect_onpolicy_trajs, 
+    generate_onpolicy_trajs,
+    mixed_sample, 
+    select_latest_obs
+)
 
 
 class SAILORTrainer:
@@ -632,7 +637,7 @@ class SAILORTrainer:
         #     num_steps_to_collect
         #     * self.config.train_dp_mppi_params["warmstart_train_ratio"]
         # )
-        num_steps_to_collect = 1000
+        num_steps_to_collect = 100
         
         # Collect rollout data with base policy
         # Save the rollout data into self.replay_buffer
@@ -667,3 +672,29 @@ class SAILORTrainer:
         # self.train_wm_critic(itrs=num_warmstart_itrs)
         
         import pdb; pdb.set_trace()
+    
+    
+    def collect_rollout_traj(self):
+        # Collect and save rollout data with base policy
+        num_demos = 1000
+        
+        # Run 10 rollouts in parallel
+        output_dir = '/home/bli678/projects/egowm/data/robomimic_datasets/square/rollout'
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, 'rollout_demo50.hdf5')
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        
+        generate_onpolicy_trajs(
+            num_demos=int(num_demos),
+            max_traj_len=self.config.time_limit if not self.config.debug else 10,
+            base_policy=DiffusionPolicyAgent(
+                config=self.config,
+                diffusion_policy=self.base_policy,
+                noise_std=self.config.train_dp_mppi_params["data_collect_noise_std"],
+            ),
+            train_env=self.train_env,
+            vis=True,
+            output_path=output_path,
+        )
+            

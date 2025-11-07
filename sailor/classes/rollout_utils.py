@@ -3,13 +3,15 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime
-import pathlib
+from pathlib import Path
 
+import imageio
 import cv2
 import einops
 import numpy as np
 import torch
 from termcolor import cprint
+import h5py
 
 from sailor.dreamer.tools import add_to_cache
 
@@ -136,153 +138,14 @@ def save_collected_traj_video(obs_traj, rollout_idx, logdir):
     )
     savedir = logdir / "collected_traj_videos/"
     os.makedirs(savedir, exist_ok=True)
-    out = cv2.VideoWriter(
+    
+    imageio.mimwrite(
         str(savedir / f"rollout_{rollout_idx}.mp4"),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        30,
-        (frames.shape[2], frames.shape[1]),
+        frames,
+        fps=30,
+        quality=8,
     )
-    for t in range(frames.shape[0]):
-        out.write(frames[t])
-    out.release()
-
-
-def collect_onpolicy_trajs(
-    num_steps,
-    max_traj_len,
-    base_policy,
-    train_env,
-    pred_horizon,
-    obs_horizon,
-    train_eps,
-    state_only,
-    save_dir=None,
-    save_episodes=False,
-    discard_if_not_success=False,
-):
-    start_time = time.time()
-    """
-    Collect num_trajs trajectories using base_policy in train_env
-    """
-    if num_steps == 0:
-        print("Collecting 0 steps.")
-        return
-
-    num_envs = train_env.num_envs
-    print(f"Collecting {num_steps} steps, Num Envs: {num_envs}")
-
-    obs = train_env.reset()
-    if state_only:
-        pixel_keys = []
-    else:
-        pixel_keys = sorted([key for key in obs.keys() if "image" in key])
-    n_step_collected = 0
-    eps_names = []
-    while n_step_collected < num_steps:
-        obs_traj = [
-            {
-                "state": [],
-                "base_action": [],
-                "residual_action": [],
-                "action": [],
-                "reward": [],
-                "is_first": [],
-                "is_last": [],
-                "is_terminal": [],
-                "success": False,
-                **{key: [] for key in pixel_keys},
-            }
-            for _ in range(num_envs)
-        ]  # List of independent dictionaries of data for each environment
-
-        # Reset the environment and the policy
-        # obs: dict_keys(['agentview_image', 'robot0_eye_in_hand_image', 
-        #                 'state', 'is_first', 'is_last', 'is_terminal'])
-        # each with shape (num_envs, ...)
-        obs = train_env.reset()
-        base_policy.reset()
-
-        dones = np.zeros(num_envs, dtype=bool)
-
-        # Collect data for obs_list
-        print(f"Collected {n_step_collected}/{num_steps}, collecting more...")
-        for step_idx in range(max_traj_len):
-            if np.all(dones):
-                break
-            
-            # generate actions with noises
-            # action_dict: dict_keys(['base_action', 'residual_action'])
-            action_dict = base_policy.get_action(obs)
-            action = np.clip(
-                action_dict["base_action"] + action_dict["residual_action"], -1, 1
-            )
-            
-            # generate obs with obatined action
-            obs_next, rewards, dones, infos = train_env.step(action)
-
-            # Add obs and action to obs_list
-            add_env_obs_to_dict(
-                obs=obs,
-                obs_traj=obs_traj,
-                base_action=action_dict["base_action"],
-                residual_action=action_dict["residual_action"],
-                action=action,
-                rewards=rewards,
-                dones=dones,
-                pixel_keys=pixel_keys,
-                step_idx=step_idx,
-                max_traj_len=max_traj_len,
-            )
-
-            all_successes = infos["success"]  # num_envs x 1
-            for env_idx in range(num_envs):
-                obs_traj[env_idx]["success"] = (
-                    all_successes[env_idx] or obs_traj[env_idx]["success"]
-                )
-
-            obs = obs_next
-
-        # Uncomment to visualize the collected trajectory
-        # save_collected_traj_video(obs_traj, rollout_idx=n_step_collected, logdir=pathlib.Path("."))
-        # breakpoint()
-
-        for env_idx in range(num_envs):
-            if discard_if_not_success == True and not obs_traj[env_idx]["success"]:
-                cprint(
-                    f"Skipping adding Env IDX: {env_idx}, Traj Len: {len(obs_traj[env_idx]['state'])}, Total Reward: {np.sum(obs_traj[env_idx]['reward'])}",
-                    "red",
-                )
-                continue
-
-            eps_name = add_traj_to_cache(
-                env_idx=env_idx,
-                obs_traj=obs_traj[env_idx],
-                pixel_keys=pixel_keys,
-                pred_horizon=pred_horizon,
-                obs_horizon=obs_horizon,
-                train_eps=train_eps,
-            )
-            eps_names.append(eps_name)
-            cprint(
-                f"Added Env IDX: {env_idx}, Traj Len: {len(obs_traj[env_idx]['state'])}, Total Reward: {np.sum(obs_traj[env_idx]['reward'])}",
-                "green",
-            )
-            n_step_collected += len(obs_traj[env_idx]["state"])
-
-        if n_step_collected >= num_steps:
-            break
-
-    print(
-        f"Time taken to collect {n_step_collected}/{num_steps} steps: {time.time() - start_time:.2f} seconds"
-    )
-
-    if save_dir is not None and save_episodes:
-        print("Saving Episodes to Disk: ", eps_names, " at ", save_dir)
-        save_episodes(
-            directory=save_dir, episodes={name: train_eps[name] for name in eps_names}
-        )
-    return n_step_collected
-
+    
 
 def add_traj_to_cache(
     env_idx, obs_traj, pixel_keys, pred_horizon, obs_horizon, train_eps
@@ -392,3 +255,377 @@ def select_latest_obs(obs: dict):
         if key not in obs_out.keys():
             obs_out[key] = obs[key]
     return obs_out
+
+
+def collect_onpolicy_trajs(
+    num_steps,
+    max_traj_len,
+    base_policy,
+    train_env,
+    pred_horizon,
+    obs_horizon,
+    train_eps,
+    state_only,
+    save_dir=None,
+    save_episodes=False,
+    discard_if_not_success=False,
+    vis=False,
+    is_stacked_obs=True,
+):
+    start_time = time.time()
+    """
+    Collect num_trajs trajectories using base_policy in train_env
+    """
+    if num_steps == 0:
+        print("Collecting 0 steps.")
+        return
+
+    num_envs = train_env.num_envs
+    print(f"Collecting {num_steps} steps, Num Envs: {num_envs}")
+
+    obs = train_env.reset()
+    if state_only:
+        pixel_keys = []
+    else:
+        pixel_keys = sorted([key for key in obs.keys() if "image" in key])
+    
+    n_step_collected = 0
+    eps_names = []
+    while n_step_collected < num_steps:
+        obs_traj = [
+            {
+                "state": [],
+                "base_action": [],
+                "residual_action": [],
+                "action": [],
+                "reward": [],
+                "is_first": [],
+                "is_last": [],
+                "is_terminal": [],
+                "success": False,
+                **{key: [] for key in pixel_keys},
+            }
+            for _ in range(num_envs)
+        ]  # List of independent dictionaries of data for each environment
+
+        # Reset the environment and the policy
+        # obs: dict_keys(['agentview_image', 'robot0_eye_in_hand_image', 
+        #                 'state', 'is_first', 'is_last', 'is_terminal'])
+        # each with shape (num_envs, ...)
+        obs = train_env.reset()
+        base_policy.reset()
+
+        dones = np.zeros(num_envs, dtype=bool)
+
+        # Collect data for obs_list
+        print(f"Collected {n_step_collected}/{num_steps}, collecting more...")
+        for step_idx in range(max_traj_len):
+            if np.all(dones):
+                break
+            
+            # generate actions with noises
+            # action_dict: dict_keys(['base_action', 'residual_action'])
+            action_dict = base_policy.get_action(obs)
+            action = np.clip(
+                action_dict["base_action"] + action_dict["residual_action"], -1, 1
+            )
+            
+            # generate obs with obatined action
+            obs_next, rewards, dones, infos = train_env.step(action)
+            import pdb; pdb.set_trace()
+
+            # Add obs and action to obs_list
+            add_env_obs_to_dict(
+                obs=obs,
+                obs_traj=obs_traj,
+                base_action=action_dict["base_action"],
+                residual_action=action_dict["residual_action"],
+                action=action,
+                rewards=rewards,
+                dones=dones,
+                pixel_keys=pixel_keys,
+                step_idx=step_idx,
+                max_traj_len=max_traj_len,
+            )
+
+            all_successes = infos["success"]  # num_envs x 1
+            for env_idx in range(num_envs):
+                obs_traj[env_idx]["success"] = (
+                    all_successes[env_idx] or obs_traj[env_idx]["success"]
+                )
+
+            obs = obs_next
+
+        # Uncomment to visualize the collected trajectory
+        if vis:
+            rollout_vis_dir = "/home/bli678/projects/egowm/demos/robomimic_square_rollout"
+            os.makedirs(rollout_vis_dir, exist_ok=True)
+            save_collected_traj_video(obs_traj, rollout_idx=n_step_collected, logdir=Path(rollout_vis_dir))
+            # breakpoint()
+
+        for env_idx in range(num_envs):
+            if discard_if_not_success == True and not obs_traj[env_idx]["success"]:
+                cprint(
+                    f"Skipping adding Env IDX: {env_idx}, Traj Len: {len(obs_traj[env_idx]['state'])}, Total Reward: {np.sum(obs_traj[env_idx]['reward'])}",
+                    "red",
+                )
+                continue
+            
+            # add to cache
+            if is_stacked_obs:
+                eps_name = add_traj_to_cache(
+                    env_idx=env_idx,
+                    obs_traj=obs_traj[env_idx],
+                    pixel_keys=pixel_keys,
+                    pred_horizon=pred_horizon,
+                    obs_horizon=obs_horizon,
+                    train_eps=train_eps,
+                )
+            else:
+                eps_name = f"traj_{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}_{env_idx}"
+                
+                obs_traj_env = obs_traj[env_idx]
+                add_to_cache(train_eps, eps_name, obs_traj_env)
+            
+            eps_names.append(eps_name)
+            cprint(
+                f"Added Env IDX: {env_idx}, Traj Len: {len(obs_traj[env_idx]['state'])}, Total Reward: {np.sum(obs_traj[env_idx]['reward'])}",
+                "green",
+            )
+            n_step_collected += len(obs_traj[env_idx]["state"])
+
+        if n_step_collected >= num_steps:
+            break
+
+    print(
+        f"Time taken to collect {n_step_collected}/{num_steps} steps: {time.time() - start_time:.2f} seconds"
+    )
+
+    if save_dir is not None and save_episodes:
+        print("Saving Episodes to Disk: ", eps_names, " at ", save_dir)
+        save_episodes(
+            directory=save_dir, episodes={name: train_eps[name] for name in eps_names}
+        )
+    return n_step_collected
+
+
+##############################################
+# New added
+##############################################
+
+def vis_rollout_data(rollout_data, save_dir, rollout_idx=0):
+    max_frames = max([len(rollout_data[i]["states"]) for i in range(len(rollout_data))])
+    
+    frames = []
+    for i in range(len(rollout_data)):
+        obs_i = rollout_data[i]['obs']
+        frames_i = [obs_i[j]['agentview_image'] for j in range(len(obs_i))]
+        if len(frames_i) < max_frames:
+            frames_i += [
+                frames_i[-1]
+                for _ in range(max_frames - len(frames_i))
+            ]
+        frames.append(frames_i)
+    
+    frames = np.array(frames)  # [n_envs, time, frame_height, frame_width, 3]
+    frames = einops.rearrange(
+        frames,
+        "n_envs n_imgs frame_height frame_width c -> n_imgs frame_height (n_envs frame_width) c",
+    )
+    
+    save_path = os.path.join(save_dir, f"rollout_{rollout_idx:04d}.mp4")
+    imageio.mimwrite(
+        str(save_path),
+        frames,
+        fps=30,
+        quality=8,
+    )
+    print(f"Saved rollout video at {save_path}")
+    
+
+def generate_onpolicy_trajs(
+    num_demos,
+    max_traj_len,
+    base_policy,
+    train_env,
+    vis=False,
+    output_path=None,
+):
+    start_time = time.time()
+    """
+    Collect num_trajs trajectories using base_policy in train_env
+    """
+    num_envs = train_env.num_envs
+    print(f"Collecting {num_demos} rollout episodes, Num Envs: {num_envs}")
+    
+    n_episodes_collected = 0
+    n_rounds = 0
+    while n_episodes_collected < num_demos:
+        cprint(f"=========Starting Round {n_rounds} of data collection=========", "yellow")
+        
+        rollout_data = [{
+            'states': [],
+            'actions': [],
+            'dones': [],
+            'obs': [],
+            'next_obs': [],
+            'rewards': [],
+        }
+            for _ in range(num_envs)
+        ]
+        
+        # Reset the environment and the policy
+        # obs: dict_keys(['agentview_image', 'robot0_eye_in_hand_image', 
+        #                 'state', 'is_first', 'is_last', 'is_terminal'])
+        # each with shape (num_envs, ...)
+        obs = train_env.reset()
+        base_policy.reset()
+        dones = np.zeros(num_envs, dtype=bool)
+        env_is_terminal = np.zeros(num_envs, dtype=bool)
+
+        # Collect data
+        print(f"Collected {n_episodes_collected}/{num_demos}, collecting more...")
+        for step_idx in range(max_traj_len):   
+            if np.all(dones):
+                break
+            
+            # generate actions with noises
+            # action_dict: dict_keys(['base_action', 'residual_action'])
+            # action: [num_envs, action_dim]
+            action_dict = base_policy.get_action(obs)
+            action = np.clip(
+                action_dict["base_action"] + action_dict["residual_action"], -1, 1
+            )
+            
+            # generate obs with obatined action
+            obs_next, rewards, dones, infos = train_env.step(action)
+
+            # append data to rollout_data
+            for env_idx in range(num_envs):
+                env_i = train_env.envs[env_idx]
+                
+                # If the previous entry for this environment had is_terminal as True, then skip this environment
+                if env_is_terminal[env_idx]:
+                    continue
+                
+                obs_i = {k: obs[k][env_idx] for k in obs.keys()}
+                obs_next_i = {k: obs_next[k][env_idx] for k in obs_next.keys()}
+                
+                rollout_data[env_idx]['states'].append(env_i.sim.get_state().flatten())
+                rollout_data[env_idx]['actions'].append(action[env_idx])
+                rollout_data[env_idx]['obs'].append(obs_i)
+                rollout_data[env_idx]['next_obs'].append(obs_next_i)
+                rollout_data[env_idx]['rewards'].append(rewards[env_idx])
+                rollout_data[env_idx]['dones'].append(dones[env_idx])
+                
+                env_is_terminal[env_idx] = obs_i['is_terminal']
+
+            obs = obs_next
+        
+        # Visualization
+        if vis:
+            save_dir = '/home/bli678/projects/egowm/demos/robomimic_square_rollout'
+            os.makedirs(save_dir, exist_ok=True)
+            vis_rollout_data(rollout_data, save_dir, rollout_idx=n_rounds)    
+        
+        # Save collected data
+        for env_idx in range(num_envs):
+            rollout_data_env = rollout_data[env_idx]
+            env_i = train_env.envs[env_idx]
+            cprint(
+                f"Added Env IDX: {env_idx}, Traj Len: {len(rollout_data_env['states'])}, Total Reward: {np.sum(rollout_data_env['rewards'])}",
+                "green",
+            )
+            n_episodes_collected += 1
+
+            # Save collected data
+            if output_path is not None:
+                save_rollout_data(rollout_data_env, env_i, output_path)
+        
+        if n_episodes_collected >= num_demos:
+            break
+        
+        n_rounds += 1
+    
+    cprint(
+        f"Collected {n_episodes_collected}/{num_demos} episodes, Time: {time.time() - start_time:.2f} seconds",
+        "yellow", attrs=["bold"]
+    )
+
+            
+        
+def save_rollout_data(rollout_data, rollout_env, output_dataset):
+    """
+    Save rollout data to HDF5 dataset in robomimic format.
+    
+    Args:
+        rollout_data (dict): Dictionary containing states, actions, obs, rewards, dones
+        rollout_env: Environment instance to extract metadata from
+        output_dataset (str): Path to output HDF5 file
+    """
+    # Create or open the output HDF5 file
+    if os.path.exists(output_dataset):
+        f_out = h5py.File(output_dataset, "a")  # append mode
+    else:
+        f_out = h5py.File(output_dataset, "w")  # write mode
+    
+    # Create data group if it doesn't exist
+    if "data" not in f_out:
+        f_out.create_group("data")
+    
+    data_grp = f_out["data"]
+    
+    # Generate unique demo name
+    existing_demos = list(data_grp.keys())
+    if existing_demos:
+        # Extract demo numbers and find the next one
+        demo_numbers = []
+        for demo_name in existing_demos:
+            if demo_name.startswith("demo_"):
+                demo_num = int(demo_name.split("_")[1])
+                demo_numbers.append(demo_num)
+        next_demo_num = max(demo_numbers) + 1 if demo_numbers else 0
+    else:
+        next_demo_num = 0
+    
+    demo_name = f"demo_{next_demo_num}"
+    
+    # Create demo group
+    demo_grp = data_grp.create_group(demo_name)
+    
+    # Convert lists to numpy arrays
+    states = np.array(rollout_data['states'])
+    actions = np.array(rollout_data['actions'])
+    rewards = np.array(rollout_data['rewards'])
+    dones = np.array(rollout_data['dones'])
+    
+    # Save states, actions, rewards
+    demo_grp.create_dataset("states", data=states)
+    demo_grp.create_dataset("actions", data=actions)
+    demo_grp.create_dataset("rewards", data=rewards)
+    demo_grp.create_dataset("dones", data=dones)
+    
+    # Save observations - create obs group and save each observation key
+    if len(rollout_data['obs']) > 0:
+        obs_grp = demo_grp.create_group("obs")
+        # Get all observation keys from the first observation
+        obs_keys = rollout_data['obs'][0].keys()
+        for obs_key in obs_keys:
+            # Stack all observations for this key across time steps
+            obs_data = np.array([obs[obs_key] for obs in rollout_data['obs']])
+            obs_grp.create_dataset(obs_key, data=obs_data)
+    
+    # Save next observations - create next_obs group and save each observation key
+    if len(rollout_data['next_obs']) > 0:
+        next_obs_grp = demo_grp.create_group("next_obs")
+        # Get all observation keys from the first next observation
+        next_obs_keys = rollout_data['next_obs'][0].keys()
+        for obs_key in next_obs_keys:
+            # Stack all next observations for this key across time steps
+            next_obs_data = np.array([obs[obs_key] for obs in rollout_data['next_obs']])
+            next_obs_grp.create_dataset(obs_key, data=next_obs_data)
+    
+    # Save episode metadata
+    current_model_xml = rollout_env.sim.model.get_xml()
+    demo_grp.attrs["model_file"] = current_model_xml
+    demo_grp.attrs["num_samples"] = len(rollout_data['actions'])

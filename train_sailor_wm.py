@@ -207,7 +207,8 @@ def train_eval(config):
 
         # Run train loop
         # trainer.train_dp_with_mppi()
-        trainer.train_test_wm()
+        # trainer.train_test_wm()
+        trainer.collect_rollout_traj()
 
     envs.close()
     cprint("--------Finished Everything--------", "yellow", attrs=["bold"])
@@ -397,8 +398,6 @@ if __name__ == "__main__":
     # final_config.logdir = (f"{final_config.scratch_dir}/logs/{exp_name}/seed{final_config.seed}")
     final_config.logdir = (f"{final_config.scratch_dir}/logs/{exp_name}")
     
-    final_config.datadir = os.path.join("datasets", f"{suite}_datasets")
-
     if final_config.generate_highres_eval:
         final_config.high_res_render = True
 
